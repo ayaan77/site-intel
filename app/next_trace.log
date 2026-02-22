@@ -1,0 +1,79 @@
+
+> app@0.1.0 dev
+> next dev -p 3000
+
+⚠ Warning: Next.js inferred your workspace root, but it may not be correct.
+ We detected multiple lockfiles and selected the directory of /Users/ayanashraf/package-lock.json as the root directory.
+ To silence this warning, set `turbopack.root` in your Next.js config, or consider removing one of the lockfiles if it's not needed.
+   See https://nextjs.org/docs/app/api-reference/config/next-config-js/turbopack#root-directory for more information.
+ Detected additional lockfiles: 
+   * /Users/ayanashraf/Documents/anti/site-intel/app/package-lock.json
+   * /Users/ayanashraf/Documents/anti/site-intel/package-lock.json
+
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://192.168.31.98:3000
+- Environments: .env.local
+
+✓ Starting...
+✓ Ready in 572ms
+ GET /chat 200 in 663ms (compile: 536ms, render: 127ms)
+ GET /chat 200 in 59ms (compile: 29ms, render: 30ms)
+Loading embedding model (Xenova/all-MiniLM-L6-v2)...
+(node:30771) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[TRACER] Executing tool: github-analyze
+[TRACER] Tool executed successfully. Size: 69
+[TRACER] Looping back to LLM for iteration 2
+ POST /api/chat 200 in 7.1s (compile: 601ms, render: 6.5s)
+[TRACER] Executing tool: github-analyze
+[TRACER] Tool executed successfully. Size: 90
+[TRACER] Looping back to LLM for iteration 2
+ POST /api/chat 200 in 38.0s (compile: 40ms, render: 37.9s)
+✓ Compiled in 126ms
+ GET / 200 in 188ms (compile: 135ms, render: 54ms)
+ GET /chat 200 in 138ms (compile: 93ms, render: 44ms)
+ POST /api/chat 200 in 3.1s (compile: 36ms, render: 3.0s)
+⨯ Error: failed to pipe response
+    at ignore-listed frames {
+  [cause]: Error: 429 {"error":{"message":"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01khjxhfh1edqt2e2qzyra6nw1` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 99177, Requested 1502. Please try again in 9m46.656s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing","type":"tokens","code":"rate_limit_exceeded"}}
+      at async Object.start (app/api/chat/route.ts:110:36)
+    108 |                     iterations++;
+    109 |
+  > 110 |                     const stream = await groq.chat.completions.create({
+        |                                    ^
+    111 |                         model: modelName,
+    112 |                         messages: messagesToSend,
+    113 |                         // If it's a casual message or a tool has already run, force a text answer {
+    status: 429,
+    headers: {
+      'alt-svc': 'h3=":443"; ma=86400',
+      'cache-control': 'private, max-age=0, no-store, no-cache, must-revalidate',
+      'cf-cache-status': 'DYNAMIC',
+      'cf-ray': '9d0b9c005c2c5982-DEL',
+      connection: 'keep-alive',
+      'content-length': '385',
+      'content-type': 'application/json',
+      date: 'Fri, 20 Feb 2026 05:29:59 GMT',
+      'retry-after': '587',
+      server: 'cloudflare',
+      'set-cookie': '__cf_bm=_J_msDT.Td6NlD0wwl52bM9svtzEgsK2gqd81nmo118-1771565399.1003044-1.0.1.1-t.7YOUMQ2VAjR1ZOKV_QnY6a75kOfuj68VFoSKFYr4AIIrhjxtZQ_ltnD85wzwxTFtXK3Wa1Yi6budyfSu4U1OGOohgKd6vl85zy6ytCg_9M4MQfkptzBpGrrqHA3svY; HttpOnly; Secure; Path=/; Domain=groq.com; Expires=Fri, 20 Feb 2026 05:59:59 GMT',
+      'strict-transport-security': 'max-age=15552000',
+      vary: 'Origin',
+      via: '1.1 google',
+      'x-groq-region': 'bom',
+      'x-ratelimit-limit-requests': '1000',
+      'x-ratelimit-limit-tokens': '12000',
+      'x-ratelimit-remaining-requests': '1000',
+      'x-ratelimit-remaining-tokens': '12000',
+      'x-ratelimit-reset-requests': '1ms',
+      'x-ratelimit-reset-tokens': '1ms',
+      'x-request-id': 'req_01khwrdf35f65bwpvejd5fa5d2',
+      'x-should-retry': 'false'
+    },
+    error: { error: [Object] }
+  }
+}
+ POST /api/chat 500 in 12.6s (compile: 46ms, render: 12.5s)
+✓ Compiled in 364ms
+[?25h
