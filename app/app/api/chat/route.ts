@@ -8,11 +8,12 @@ import { mcpManager } from "@/lib/mcp/client";
 import { runCouncil, isCouncilAvailable, MODEL_TIERS } from "@/lib/ai/council";
 import { fetchGitHubRepo, buildRepoContext } from "@/lib/ai/github";
 import { MemoryManager } from "@/lib/memory/memory-manager";
+import { runDeepResearch } from "@/lib/ai/deep-research";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
-    const { messages, mode = "architect", modelTier = "high", councilEnabled = false, mcpEnabled = false, generateSpec = false, apiKey, apiBaseUrl } = await req.json();
+    const { messages, mode = "architect", modelTier = "high", councilEnabled = false, mcpEnabled = false, generateSpec = false, deepResearch = false, apiKey, apiBaseUrl } = await req.json();
 
     const key = apiKey || process.env.GROQ_API_KEY;
     if (!key) return NextResponse.json({ error: "No API key provided." }, { status: 401 });
@@ -25,14 +26,18 @@ export async function POST(req: NextRequest) {
     let systemPrompt = buildSystemPrompt(character);
 
     // ── Memory System (RAG & Learning) ────────────────────────────────────────
+    const groqForMemory = new Groq({ apiKey: key, baseURL: apiBaseUrl || undefined });
+    const resolvedModelName = MODEL_TIERS[modelTier as keyof typeof MODEL_TIERS]?.model || MODEL_TIERS.high.model;
     try {
         const memoryManager = new MemoryManager();
 
         // 1. Learning: Save user message asynchronously
-        // We await this to ensure persistence, but ideally this would be a background job
         await memoryManager.add(lastMessage.content, "user_chat", { role: "user", mode });
 
-        // 2. Retrieval: Search for relevant context
+        // 2. Background: condense old memories if needed (fire and forget)
+        void memoryManager.condenseIfNeeded(groqForMemory, resolvedModelName, mode);
+
+        // 3. Retrieval: Search for relevant context
         const memories = await memoryManager.search(lastMessage.content);
         if (memories.length > 0) {
             const memoryContext = memories.map(m => `- ${m.content} `).join("\n");
@@ -44,8 +49,58 @@ export async function POST(req: NextRequest) {
     }
 
 
+    // ── Deep Research Mode ──────────────────────────────────────────────────────
+    if (deepResearch) {
+        const groq = new Groq({ apiKey: key, baseURL: apiBaseUrl || undefined });
+        let modelName = MODEL_TIERS[modelTier as keyof typeof MODEL_TIERS]?.model || MODEL_TIERS.high.model;
+        if (apiBaseUrl?.includes("nvidia.com")) modelName = "meta/llama-3.3-70b-instruct";
+
+        const encoder = new TextEncoder();
+        const readable = new ReadableStream({
+            async start(controller) {
+                try {
+                    for await (const chunk of runDeepResearch(lastMessage.content, groq, modelName)) {
+                        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: chunk })}\n\n`));
+                    }
+                    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                } catch (err: unknown) {
+                    const msg = err instanceof Error ? err.message : "Deep Research Error";
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`));
+                } finally {
+                    controller.close();
+                }
+            }
+        });
+        return new Response(readable, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+    }
+
     // ── Action System (ElizaOS Pattern) is now part of the Standard Streaming logic ──
     // We removed the heuristic `findAction` block. Tools are passed directly to the LLM.
+
+    // ── Deep Research Mode ──────────────────────────────────────────────────────
+    if (deepResearch) {
+        const encoder = new TextEncoder();
+        const readable = new ReadableStream({
+            async start(controller) {
+                const send = (text: string) => {
+                    // Normalize text stream so that it renders smoothly in markdown
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })} \n\n`));
+                };
+
+                try {
+                    const generator = runDeepResearch(lastMessage.content, new Groq({ apiKey: key, baseURL: apiBaseUrl || undefined }), "llama-3.3-70b-versatile");
+                    for await (const chunk of generator) {
+                        send(chunk);
+                    }
+                    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+                } catch (err: any) {
+                    controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err.message })} \n\n`));
+                }
+                controller.close();
+            }
+        });
+        return new Response(readable, { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } });
+    }
 
     // ── Council Mode ────────────────────────────────────────────────────────────
     if (councilEnabled && isCouncilAvailable(mode)) {
@@ -56,8 +111,8 @@ export async function POST(req: NextRequest) {
                 const send = (text: string) => controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text })} \n\n`));
                 try {
                     const result = await runCouncil(lastMessage.content, systemPrompt, key, send);
-                    send("\\n\\n---\\n\\n" + result.stage3.content);
-                    controller.enqueue(encoder.encode("data: [DONE]\\n\\n"));
+                    send("\n\n---\n\n" + result.stage3.content);
+                    controller.enqueue(encoder.encode("data: [DONE]\n\n"));
                 } catch (err: any) {
                     controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err.message })} \n\n`));
                 }
@@ -215,7 +270,7 @@ export async function POST(req: NextRequest) {
                         // FALLBACK: Groq Llama 3 often ignores the native tool_calls array and returns raw <function=NAME>{"arg":"val"} text.
                         // If we didn't get a native tool call, but we captured one in the text accumulator, parse it manually.
                         if (!isFunctionCall && rawContentAccumulator.includes("<function=")) {
-                            const match = rawContentAccumulator.match(/<function=([^>]+)>([^<]*)(?:<\/function>)?/);
+                            const match = rawContentAccumulator.match(/<function=["']?([^>\"']+)["']?>([\s\S]*?)(?:<\/function>|$)/);
                             if (match) {
                                 isFunctionCall = true;
                                 functionName = match[1].trim();
@@ -236,7 +291,13 @@ export async function POST(req: NextRequest) {
                             });
 
                             let parsedArgs: Record<string, any> = {};
-                            try { parsedArgs = JSON.parse(functionCallBuffer); } catch { }
+                            try {
+                                // Clean up markdown json blocks if Llama hallucinated them inside the xml tag
+                                const cleanJson = functionCallBuffer.replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/i, "").trim() || "{}";
+                                parsedArgs = JSON.parse(cleanJson);
+                            } catch {
+                                console.error(`[TRACER] Failed to parse expected JSON arguments:`, functionCallBuffer);
+                            }
 
                             // Notify UI that a tool is running seamlessly
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify({ text: `\n\n> ⚙️ Running Tool: \`${functionName}\`...\n\n` })} \n\n`));

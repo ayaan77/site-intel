@@ -1,9 +1,11 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { Pinecone } from '@pinecone-database/pinecone';
+import Groq from 'groq-sdk';
 import { randomUUID } from 'crypto';
 import { Memory, MemoryManager as IMemoryManager, MemoryResult } from './types';
 import { embed } from '../ai/embed';
+import { condenseOldMemories } from './condenser';
 
 export class MemoryManager implements IMemoryManager {
     private supabase: SupabaseClient;
@@ -104,7 +106,6 @@ export class MemoryManager implements IMemoryManager {
             const vector = await embed(query);
             const index = this.pinecone.index(this.indexName);
 
-            // Check if query needs object wrapper too? Usually query({ vector, ... }) is fine.
             const results = await index.query({
                 topK: limit,
                 vector: vector,
@@ -114,16 +115,17 @@ export class MemoryManager implements IMemoryManager {
 
             if (!results.matches) return [];
 
-            return results.matches.map((m: any) => ({
+            return results.matches.map(m => ({
                 id: m.id,
-                content: (m.metadata?.content as string) || '',
-                source: (m.metadata?.source as string) || undefined,
-                metadata: m.metadata,
+                content: (m.metadata?.['content'] as string) || '',
+                source: (m.metadata?.['source'] as string) || undefined,
+                metadata: m.metadata as Record<string, unknown>,
                 createdAt: new Date()
             }));
 
-        } catch (err: any) {
-            console.error("Memory Search Error:", err.message);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error("Memory Search Error:", msg);
             return [];
         }
     }
@@ -139,17 +141,26 @@ export class MemoryManager implements IMemoryManager {
                 throw new Error(`Supabase Error: ${error.message}`);
             }
 
-            return (data || []).map((m: any) => ({
-                id: m.id,
-                content: m.content,
-                source: m.source,
-                metadata: m.metadata,
-                createdAt: new Date(m.created_at)
+            return ((data ?? []) as Array<Record<string, unknown>>).map(m => ({
+                id: m['id'] as string,
+                content: m['content'] as string,
+                source: m['source'] as string,
+                metadata: m['metadata'] as Record<string, unknown>,
+                createdAt: new Date(m['created_at'] as string)
             }));
-        } catch (err: any) {
-            console.error("Memory GetAll Error:", err.message);
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error("Memory GetAll Error:", msg);
             return [];
         }
+    }
+
+    /**
+     * Fire-and-forget: condenses old memories if the count exceeds the threshold.
+     * Call with `void` to not block the main request.
+     */
+    async condenseIfNeeded(groq: Groq, modelName: string, mode: string): Promise<void> {
+        await condenseOldMemories(this.supabase, this.pinecone, groq, modelName, mode);
     }
 
     async delete(id: string): Promise<MemoryResult> {

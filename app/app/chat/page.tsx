@@ -37,6 +37,7 @@ export default function ChatPage() {
     const [modelTier, setModelTier] = useState("high");
     const [councilEnabled, setCouncilEnabled] = useState(false);
     const [mcpEnabled, setMcpEnabled] = useState(false);
+    const [deepResearch, setDeepResearch] = useState(false);
     const [copiedId, setCopiedId] = useState<string | null>(null);
     const [spec, setSpec] = useState<string | null>(null);
     const [searchQuery, setSearchQuery] = useState("");
@@ -120,7 +121,7 @@ export default function ChatPage() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     messages: updatedMessages.map(({ role, content }) => ({ role, content })),
-                    mode, modelTier, councilEnabled, mcpEnabled, apiKey, apiBaseUrl
+                    mode, modelTier, councilEnabled, mcpEnabled, deepResearch, apiKey, apiBaseUrl
                 }),
                 signal: ctrl.signal,
             });
@@ -219,108 +220,67 @@ export default function ChatPage() {
         }
 
         setLoading(false);
-    }, [input, loading, messages, mode, modelTier, councilEnabled, mcpEnabled, apiKey, apiBaseUrl]);
-
-    const sendVoice = useCallback(async (audioBlob: Blob) => {
-        if (loading) return;
-        setLoading(true);
-
-        const assistantId = genId();
-        // Add a temporary "Processing Voice..." message
+    }, [input, loading, messages, mode, modelTier, councilEnabled, mcpEnabled, deepResearch, apiKey, apiBaseUrl]);
+    const handleVoiceStreamStart = useCallback(() => {
+        // Add a temporary listening message
         setMessages((prev) => [
             ...prev,
-            { id: genId(), role: "user", content: "🎙️ [Voice Audio Sent]" },
-            { id: assistantId, role: "assistant", content: "Transcribing and thinking...", isCouncilResult: false }
+            { id: "voice-input-temp", role: "user", content: "🎙️ Listening..." }
         ]);
+        setLoading(true);
+    }, []);
 
-        // Play a "Hold on" voice cue if latency exceeds 3 seconds
-        let responseReceived = false;
-        const latencyTimer = setTimeout(() => {
-            if (!responseReceived && 'speechSynthesis' in window) {
-                const utterance = new SpeechSynthesisUtterance("One moment please...");
-                utterance.rate = 1.1;
-                // Try to find a decent English voice
-                const voices = window.speechSynthesis.getVoices();
-                const engVoice = voices.find(v => v.lang.startsWith('en-') && (v.name.includes('Female') || v.name.includes('Samantha') || v.name.includes('Google UK')));
-                if (engVoice) utterance.voice = engVoice;
-                window.speechSynthesis.speak(utterance);
+    const handleVoiceStreamEnd = useCallback(() => {
+        // Voice streaming ended, backend is processing
+        setMessages((prev) => {
+            const newMessages = [...prev];
+            const tempIdx = newMessages.findIndex(m => m.id === "voice-input-temp");
+            if (tempIdx !== -1) {
+                newMessages[tempIdx] = { ...newMessages[tempIdx], content: "🎙️ Processing audio..." };
             }
-        }, 3000);
+            return newMessages;
+        });
 
-        try {
-            const formData = new FormData();
-            formData.append("audio", audioBlob, "voice.webm");
-            formData.append("mode", mode);
-            formData.append("modelTier", modelTier);
-            formData.append("apiKey", apiKey);
-            formData.append("apiBaseUrl", apiBaseUrl);
-            formData.append("mcpEnabled", String(mcpEnabled));
-            formData.append("messages", JSON.stringify(messages.map(({ role, content }) => ({ role, content }))));
+        // Note: We need a mechanism to receive the final response from the backend WS
+        // In a full implementation, page.tsx would likely hold the WS connection
+        // or ChatInput would pass the received response up to page.tsx.
+        // For now, we simulate completion to unlock the UI.
+        setTimeout(() => setLoading(false), 2000);
+    }, []);
 
-            const res = await fetch("/api/voice", {
-                method: "POST",
-                body: formData,
-            });
-
-            if (!res.ok) {
-                const err = await res.json();
-                setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: `❌ ${err.error || "Voice processing failed."}` } : m));
-                setLoading(false);
-                return;
-            }
-
-            const data = await res.json();
-
-            responseReceived = true;
-            clearTimeout(latencyTimer);
-            if ('speechSynthesis' in window) {
-                window.speechSynthesis.cancel(); // Stop "Hold on" if it's currently speaking
-            }
-
-            // Update the UI with actual transcription and response
-            setMessages((prev) => {
-                const newMessages = [...prev];
-                // Find the user message we just added
-                const userMsgIndex = newMessages.findIndex(m => m.content === "🎙️ [Voice Audio Sent]");
-                if (userMsgIndex !== -1) {
-                    newMessages[userMsgIndex] = { ...newMessages[userMsgIndex], content: `🎙️ ${data.transcription || "[Unclear Audio]"}` };
-                }
-                // Find the assistant message
-                const asstMsgIndex = newMessages.findIndex(m => m.id === assistantId);
-                if (asstMsgIndex !== -1) {
-                    let displayContent = data.response || "No response generated.";
-                    let thinkingBlock = "";
-                    const thinkingStart = displayContent.indexOf("<thinking>");
-                    if (thinkingStart !== -1) {
-                        const thinkingEnd = displayContent.indexOf("</thinking>");
-                        if (thinkingEnd !== -1) {
-                            thinkingBlock = displayContent.substring(thinkingStart + 10, thinkingEnd).trim();
-                            displayContent = displayContent.substring(0, thinkingStart) + displayContent.substring(thinkingEnd + 11);
-                        } else {
-                            thinkingBlock = displayContent.substring(thinkingStart + 10).trim();
-                            displayContent = displayContent.substring(0, thinkingStart);
-                        }
-                    }
-                    newMessages[asstMsgIndex] = { ...newMessages[asstMsgIndex], content: displayContent.trim(), thinking: thinkingBlock };
-                }
-                return newMessages;
-            });
-
-            // Play the returned audio
-            if (data.audioBase64) {
-                const audio = new Audio("data:audio/wav;base64," + data.audioBase64);
-                audio.play().catch(e => console.error("Error playing audio:", e));
-            }
-
-        } catch (err) {
-            console.error("Voice Error", err);
-            setMessages((prev) => prev.map((m) => m.id === assistantId ? { ...m, content: "❌ Voice network request failed." } : m));
-        } finally {
-            responseReceived = true;
-            clearTimeout(latencyTimer);
-            setLoading(false);
+    const handleVoiceStreamInterrupt = useCallback(() => {
+        console.log("Voice stream interrupted by VAD.");
+        // Stop any ongoing audio playback here if we had one
+        if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
         }
-    }, [loading, messages, mode, modelTier, apiKey, apiBaseUrl]);
+    }, []);
+
+    const handleVoiceTranscription = useCallback((text: string) => {
+        setMessages((prev) => {
+            const newMessages = [...prev];
+            const tempIdx = newMessages.findIndex(m => m.id === "voice-input-temp");
+            if (tempIdx !== -1) {
+                newMessages[tempIdx] = { ...newMessages[tempIdx], content: text, id: genId() };
+            } else {
+                newMessages.push({ id: genId(), role: "user", content: text });
+            }
+            return newMessages;
+        });
+    }, []);
+
+    const handleVoiceCompletion = useCallback((text: string) => {
+        setMessages((prev) => [
+            ...prev,
+            { id: genId(), role: "assistant", content: text }
+        ]);
+        setLoading(false);
+    }, []);
+
+    const handleVoiceError = useCallback((err: any) => {
+        setMessages((prev) => prev.filter(m => m.id !== "voice-input-temp"));
+        setLoading(false);
+    }, []);
 
     const generateSpec = async () => {
         setLoading(true);
@@ -445,9 +405,16 @@ export default function ChatPage() {
                             value={input}
                             onChange={setInput}
                             onSend={send}
-                            onVoiceSend={sendVoice}
                             loading={loading}
                             mode={mode}
+                            deepResearch={deepResearch}
+                            onDeepResearchToggle={() => setDeepResearch(!deepResearch)}
+                            onVoiceStreamStart={handleVoiceStreamStart}
+                            onVoiceStreamEnd={handleVoiceStreamEnd}
+                            onVoiceStreamInterrupt={handleVoiceStreamInterrupt}
+                            onVoiceTranscription={handleVoiceTranscription}
+                            onVoiceCompletion={handleVoiceCompletion}
+                            onVoiceError={handleVoiceError}
                         />
                     </div>
                 )}
