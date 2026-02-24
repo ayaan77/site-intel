@@ -27,6 +27,13 @@ For complex queries, activate **The Council** to get a 3-stage deliberation:
 - **CRO Audit**: Analyzes landing pages for conversion killers (Trust, CTA, Layout) and assigns a 0-100 score.
 - **GitHub Deep Dive**: Server-side analysis of GitHub repositories (File Tree + Content) to understand architecture.
 
+### 🧠 Structured Reasoning (Chain-of-Thought)
+AngleTalk is equipped with a strict structured reasoning framework to prevent hallucinations and improve logical accuracy. Before generating an answer, it must map out:
+- **Facts**: verified knowledge only.
+- **Assumptions**: explicit declarations of what it assumes.
+- **Plan**: step-by-step strategy.
+- **Critique & Tools**: self-correction and mandatory tool usage for missing facts.
+
 ---
 
 ## 🤖 The 9 AI Modes
